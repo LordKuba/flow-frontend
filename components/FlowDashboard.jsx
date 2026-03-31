@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from "react";
-import { contacts as contactsApi, conversations as convsApi, tasks as tasksApi, events as eventsApi, notifications as notifsApi, stats as statsApi } from "@/lib/api";
+import { contacts as contactsApi, conversations as convsApi, tasks as tasksApi, events as eventsApi, notifications as notifsApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 
@@ -306,9 +306,9 @@ export default function FlowDashboard() {
   const [activeTab, setActiveTab] = useState("inbox");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [messages, setMessages] = useState(mockMessages);
-  const [activeMessage, setActiveMessage] = useState(mockMessages[0]);
-  const [tasks, setTasks] = useState(mockTasks);
+  const [messages, setMessages] = useState([]);
+  const [activeMessage, setActiveMessage] = useState(null);
+  const [tasks, setTasks] = useState([]);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [taskForm, setTaskForm] = useState({ title: "", contact: "", priority: "בינונית", due: "", notes: "", fromMsg: "", channel: "" });
   const [taskFilter, setTaskFilter] = useState("הכל");
@@ -323,10 +323,10 @@ export default function FlowDashboard() {
   const [typeFilter, setTypeFilter] = useState("הכל");
   const [statFilter, setStatFilter] = useState("הכל");
   const [showInboxFilter, setShowInboxFilter] = useState(false);
-  const [leads, setLeads] = useState(mockLeads);
+  const [leads, setLeads] = useState([]);
   const [openLeadDrop, setOpenLeadDrop] = useState(null);
   const [hoveredLead, setHoveredLead] = useState(null);
-  const [events, setEvents] = useState(mockEvents);
+  const [events, setEvents] = useState([]);
   const [showMeeting, setShowMeeting] = useState(false);
   const [meetForm, setMeetForm] = useState({ title: "", date: "", time: "", duration: "30 דק'", notes: "", contact: "" });
   const [editEvent, setEditEvent] = useState(null);
@@ -369,11 +369,12 @@ export default function FlowDashboard() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [convsData, tasksData, eventsData, notifsData] = await Promise.allSettled([
+        const [convsData, tasksData, eventsData, notifsData, leadsData] = await Promise.allSettled([
           convsApi.list({ limit: 50 }),
           tasksApi.list({ limit: 100 }),
           eventsApi.list({ limit: 50 }),
           notifsApi.list(),
+          contactsApi.list({ limit: 100 }),
         ]);
 
         if (convsData.status === 'fulfilled' && convsData.value.conversations) {
@@ -390,10 +391,8 @@ export default function FlowDashboard() {
             subStatus: c.contact?.status || '',
             assignedTo: c.assigned_to || 'main',
           }));
-          if (mapped.length > 0) {
-            setMessages(mapped);
-            setActiveMessage(mapped[0]);
-          }
+          setMessages(mapped);
+          setActiveMessage(mapped[0] || null);
         }
 
         if (tasksData.status === 'fulfilled' && tasksData.value.tasks) {
@@ -412,7 +411,7 @@ export default function FlowDashboard() {
             subtasks: [],
             description: t.description || '',
           }));
-          if (mapped.length > 0) setTasks(mapped);
+          setTasks(mapped);
         }
 
         if (eventsData.status === 'fulfilled' && eventsData.value.events) {
@@ -424,7 +423,7 @@ export default function FlowDashboard() {
             color: '#1e5fa8',
             contact: e.contact?.name || e.contact?.full_name || '',
           }));
-          if (mapped.length > 0) setEvents(mapped);
+          setEvents(mapped);
         }
 
         if (notifsData.status === 'fulfilled' && notifsData.value.notifications) {
@@ -435,6 +434,23 @@ export default function FlowDashboard() {
             read: n.is_read,
           }));
           setNotifications(mapped);
+        }
+
+        if (leadsData.status === 'fulfilled' && leadsData.value.contacts) {
+          const statusColors = { lead: '#3a8fe8', customer: '#22c55e', inactive: '#4a6070' };
+          const mapped = leadsData.value.contacts.map(c => ({
+            id: c.id,
+            name: c.name || c.full_name,
+            business: c.business_name || '',
+            status: c.type === 'customer' ? 'לקוח' : 'ליד',
+            subStatus: c.status || '',
+            value: c.deal_value ? `₪${c.deal_value.toLocaleString()}` : '',
+            time: c.created_at ? new Date(c.created_at).toLocaleDateString('he-IL') : '',
+            avatar: (c.name || c.full_name || 'X')[0],
+            color: statusColors[c.type] || '#3a8fe8',
+            channel: c.source_channel || 'whatsapp',
+          }));
+          setLeads(mapped);
         }
       } catch (err) {
         console.error('Data load error:', err);
