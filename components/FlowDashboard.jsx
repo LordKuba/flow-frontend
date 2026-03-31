@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from "react";
-import { contacts as contactsApi, conversations as convsApi, tasks as tasksApi, events as eventsApi, notifications as notifsApi } from "@/lib/api";
+import { contacts as contactsApi, conversations as convsApi, tasks as tasksApi, events as eventsApi, notifications as notifsApi, channels as channelsApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 
@@ -359,6 +359,8 @@ export default function FlowDashboard() {
   const [chatMessages, setChatMessages] = useState({});
   const [connected, setConnected] = useState({ whatsapp: false, instagram: false, facebook: false, gmail: false });
   const [connecting, setConnecting] = useState(null);
+  const [waModal, setWaModal] = useState({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
+  const waPollerRef = useRef(null);
   const [profile, setProfile] = useState({ name: "נירו", business: "Flow", email: "niro@flowapp.co.il", phone: "050-0000000" });
   const [profileSaved, setProfileSaved] = useState(false);
   const [contactInfoMap, setContactInfoMap] = useState({}); // { [msgId]: { phone, email, notes } }
@@ -457,6 +459,13 @@ export default function FlowDashboard() {
       }
     };
     load();
+
+    // Load WhatsApp connection status
+    channelsApi.whatsappStatus().then(data => {
+      if (data?.status === 'connected') {
+        setConnected(p => ({ ...p, whatsapp: true }));
+      }
+    }).catch(() => {});
   }, []);
 
   // חישוב התראות מ-state אמיתי – חייב להיות אחרי כל ה-state
@@ -582,8 +591,55 @@ export default function FlowDashboard() {
   };
 
   const doConnect = (ch) => {
+    if (ch === 'whatsapp') {
+      setWaModal({ open: true, step: 'disclaimer', qr: null, error: null, channelId: null });
+      return;
+    }
+    // Other channels: placeholder
     setConnecting(ch);
     setTimeout(() => { setConnected(p => ({ ...p, [ch]: true })); setConnecting(null); }, 2000);
+  };
+
+  const startWaPolling = (channelId) => {
+    if (waPollerRef.current) clearInterval(waPollerRef.current);
+    waPollerRef.current = setInterval(async () => {
+      try {
+        const data = await channelsApi.whatsappStatus();
+        if (data?.status === 'connected' || data?.session_status === 'ready') {
+          clearInterval(waPollerRef.current);
+          waPollerRef.current = null;
+          setConnected(p => ({ ...p, whatsapp: true }));
+          setWaModal({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
+        } else if (data?.qr) {
+          setWaModal(p => ({ ...p, qr: data.qr }));
+        }
+      } catch {}
+    }, 3000);
+  };
+
+  const acceptWaDisclaimer = async () => {
+    setWaModal(p => ({ ...p, step: 'loading', error: null }));
+    try {
+      const data = await channelsApi.whatsappQr(true);
+      if (data?.status === 'qr_pending' && data?.qr) {
+        setWaModal(p => ({ ...p, step: 'qr', qr: data.qr, channelId: data.channel_id }));
+        startWaPolling(data.channel_id);
+      } else if (data?.status === 'already_connected') {
+        setConnected(p => ({ ...p, whatsapp: true }));
+        setWaModal({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
+      } else {
+        // Initializing — poll for QR
+        setWaModal(p => ({ ...p, step: 'qr', qr: null, channelId: data?.channel_id }));
+        startWaPolling(data?.channel_id);
+      }
+    } catch (err) {
+      setWaModal(p => ({ ...p, step: 'disclaimer', error: 'שגיאה בחיבור. נסה שוב.' }));
+    }
+  };
+
+  const closeWaModal = () => {
+    if (waPollerRef.current) { clearInterval(waPollerRef.current); waPollerRef.current = null; }
+    setWaModal({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
   };
 
   const assignTo = (msgId, userId) => {
@@ -2544,7 +2600,7 @@ export default function FlowDashboard() {
     return renderInbox();
   };
 
-  return (
+  return (<>
     <div style={{ display:"flex", height:"100vh", fontFamily:"'Heebo',sans-serif", direction:"rtl", background:"#f5f0e8", overflow:"hidden" }}>
       <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet" />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(1.4)}}`}</style>
@@ -3050,5 +3106,55 @@ export default function FlowDashboard() {
         </div>
       </div>
     </div>
-  );
+
+    {/* ── WhatsApp QR Modal ── */}
+    {waModal.open && (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+        <div style={{ background:"#fff", borderRadius:20, padding:28, maxWidth:420, width:"100%", boxShadow:"0 8px 40px rgba(0,0,0,0.2)", fontFamily:"'Heebo',sans-serif", direction:"rtl" }}>
+
+          {/* Disclaimer step */}
+          {waModal.step === 'disclaimer' && (<>
+            <div style={{ fontSize:18, fontWeight:800, color:"#0d1f3c", marginBottom:12 }}>💬 חיבור WhatsApp</div>
+            <div style={{ fontSize:13, color:"#4a6070", lineHeight:1.7, marginBottom:20, background:"#fffbeb", border:"1.5px solid #fde68a", borderRadius:12, padding:"14px 16px" }}>
+              חיבור זה מתבצע דרך WhatsApp Web ואינו חיבור רשמי של Meta. השימוש כפוף לתנאי השירות של WhatsApp. Flow אינה אחראית לכל הגבלה, חסימה, או שינוי מדיניות מצד WhatsApp. האחריות המלאה על החשבון המחובר היא של המשתמש בלבד.
+            </div>
+            {waModal.error && <div style={{ fontSize:13, color:"#dc2626", marginBottom:12, fontWeight:600 }}>{waModal.error}</div>}
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <button onClick={closeWaModal} style={{ padding:"10px 20px", borderRadius:10, border:"1.5px solid rgba(0,0,0,0.1)", background:"transparent", color:"#4a6070", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"'Heebo',sans-serif" }}>ביטול</button>
+              <button onClick={acceptWaDisclaimer} style={{ padding:"10px 24px", borderRadius:10, border:"none", background:"#25D366", color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Heebo',sans-serif" }}>מאשר — המשך</button>
+            </div>
+          </>)}
+
+          {/* Loading step */}
+          {waModal.step === 'loading' && (<>
+            <div style={{ fontSize:18, fontWeight:800, color:"#0d1f3c", marginBottom:20 }}>💬 מאתחל חיבור...</div>
+            <div style={{ display:"flex", justifyContent:"center", alignItems:"center", padding:"30px 0" }}>
+              <div style={{ width:48, height:48, border:"4px solid rgba(37,211,102,0.2)", borderTop:"4px solid #25D366", borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
+            </div>
+            <div style={{ fontSize:13, color:"#4a6070", textAlign:"center" }}>מאתחל Puppeteer — עלול לקחת 30–60 שניות</div>
+          </>)}
+
+          {/* QR step */}
+          {waModal.step === 'qr' && (<>
+            <div style={{ fontSize:18, fontWeight:800, color:"#0d1f3c", marginBottom:6 }}>📱 סרוק QR ב-WhatsApp</div>
+            <div style={{ fontSize:13, color:"#4a6070", marginBottom:16 }}>פתח WhatsApp → הגדרות → מכשירים מקושרים → קשר מכשיר</div>
+            <div style={{ display:"flex", justifyContent:"center", alignItems:"center", minHeight:220, background:"#f8fafc", borderRadius:14, border:"1.5px solid rgba(0,0,0,0.08)", marginBottom:16 }}>
+              {waModal.qr
+                ? <img src={waModal.qr} alt="QR Code" style={{ width:200, height:200, imageRendering:"pixelated" }} />
+                : <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:12 }}>
+                    <div style={{ width:36, height:36, border:"3px solid rgba(37,211,102,0.2)", borderTop:"3px solid #25D366", borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
+                    <div style={{ fontSize:13, color:"#4a6070" }}>ממתין ל-QR...</div>
+                  </div>
+              }
+            </div>
+            <div style={{ fontSize:12, color:"#4a6070", textAlign:"center", marginBottom:16 }}>ממתין לסריקה... הדף מתעדכן אוטומטית</div>
+            <div style={{ display:"flex", justifyContent:"center" }}>
+              <button onClick={closeWaModal} style={{ padding:"9px 22px", borderRadius:10, border:"1.5px solid rgba(0,0,0,0.1)", background:"transparent", color:"#4a6070", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'Heebo',sans-serif" }}>ביטול</button>
+            </div>
+          </>)}
+
+        </div>
+      </div>
+    )}
+  </>);
 }
