@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from "react";
-import { contacts as contactsApi, conversations as convsApi, tasks as tasksApi, events as eventsApi, notifications as notifsApi, channels as channelsApi } from "@/lib/api";
+import { contacts as contactsApi, conversations as convsApi, tasks as tasksApi, events as eventsApi, notifications as notifsApi, channels as channelsApi, org as orgApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 
@@ -278,7 +278,7 @@ export default function FlowDashboard() {
   const router = useRouter();
 
   const [currentUser] = useState("main"); // "main" = חשבון ראשי
-  const [team] = useState(mockTeam);
+  const [team, setTeam] = useState([]);
   const [assignFilter, setAssignFilter] = useState("הכל"); // "הכל" / "שלי"
   const [unreadFilter, setUnreadFilter] = useState(false);
   const [showAssignDrop, setShowAssignDrop] = useState(false);
@@ -464,6 +464,22 @@ export default function FlowDashboard() {
     channelsApi.whatsappStatus().then(data => {
       if (data?.status === 'connected') {
         setConnected(p => ({ ...p, whatsapp: true }));
+      }
+    }).catch(() => {});
+
+    // Load real team members
+    orgApi.team().then(data => {
+      if (data?.team?.length) {
+        const roleLabels = { main: 'ראשי', manager: 'מנהל', agent: 'נציג' };
+        const colors = ['#1e5fa8', '#c0614a', '#22c55e', '#b89440', '#7c5cbf', '#3a8fe8'];
+        const mapped = data.team.map((u, i) => ({
+          id: u.id,
+          name: u.name || u.email,
+          role: roleLabels[u.role] || u.role,
+          avatar: (u.name || u.email || 'U')[0].toUpperCase(),
+          color: colors[i % colors.length],
+        }));
+        setTeam(mapped);
       }
     }).catch(() => {});
   }, []);
