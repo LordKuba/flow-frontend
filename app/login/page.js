@@ -44,7 +44,7 @@ export default function LoginPage() {
     width: '100%', padding: '12px 16px', borderRadius: 10, fontSize: 15,
     border: '1.5px solid rgba(0,0,0,0.12)', outline: 'none',
     fontFamily: 'inherit', direction: 'rtl', background: '#fff',
-    boxSizing: 'border-box',
+    color: '#0d1f3c', boxSizing: 'border-box',
   };
 
   return (
