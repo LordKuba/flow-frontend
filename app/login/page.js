@@ -100,11 +100,9 @@ export default function LoginPage() {
 
       {/* ── Left Panel — Branding ── */}
       <div style={{
-        display: 'none', flex: 1, background: C.navy, padding: '48px 52px',
+        flex: 1, background: C.navy, padding: '48px 52px',
         flexDirection: 'column', justifyContent: 'space-between', position: 'relative',
         overflow: 'hidden',
-        // Show on desktop
-        '@media (min-width: 768px)': { display: 'flex' },
       }} className="login-left">
         {/* BG blobs */}
         <div style={{ position: 'absolute', top: -80, left: -80, width: 320, height: 320, borderRadius: '50%', background: 'rgba(30,95,168,0.25)', filter: 'blur(60px)' }} />
@@ -284,15 +282,14 @@ export default function LoginPage() {
       </div>
 
       <style>{`
-        @media (min-width: 768px) {
-          .login-left { display: flex !important; }
-          .mobile-logo { display: none !important; }
-        }
+        .login-left { display: flex; }
+        .mobile-logo { display: none; }
         @media (max-width: 767px) {
           .login-left { display: none !important; }
           .mobile-logo { display: block !important; }
         }
         input:focus { border-color: #1e5fa8 !important; background: #fff !important; }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
