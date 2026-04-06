@@ -464,6 +464,7 @@ export default function FlowDashboard() {
     channelsApi.whatsappStatus().then(data => {
       if (data?.status === 'connected') {
         setConnected(p => ({ ...p, whatsapp: true }));
+        if (data?.channel_id) setWaModal(p => ({ ...p, channelId: data.channel_id }));
       }
     }).catch(() => {});
 
@@ -1845,7 +1846,12 @@ export default function FlowDashboard() {
                 {connected[g.id] ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#16a34a", display: "flex", alignItems: "center", gap: 4 }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a" }}/>מחובר</div>
-                    <button onClick={()=>setConnected(p=>({...p,[g.id]:false}))} style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid rgba(0,0,0,0.1)", background: "transparent", color: "#4a6070", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Heebo',sans-serif" }}>נתק</button>
+                    <button onClick={async ()=>{
+                      if(g.id==='whatsapp' && waModal.channelId){
+                        try { await channelsApi.disconnect(waModal.channelId); } catch {}
+                      }
+                      setConnected(p=>({...p,[g.id]:false}));
+                    }} style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid rgba(0,0,0,0.1)", background: "transparent", color: "#4a6070", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Heebo',sans-serif" }}>נתק</button>
                   </div>
                 ) : (
                   <button onClick={()=>doConnect(g.id)} disabled={connecting===g.id}
