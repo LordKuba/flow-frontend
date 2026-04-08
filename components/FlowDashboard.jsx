@@ -372,7 +372,7 @@ export default function FlowDashboard() {
     const load = async () => {
       try {
         const [convsData, tasksData, eventsData, notifsData, leadsData] = await Promise.allSettled([
-          convsApi.list({ limit: 50 }),
+          convsApi.list({}),
           tasksApi.list({ limit: 100 }),
           eventsApi.list({ limit: 50 }),
           notifsApi.list(),
