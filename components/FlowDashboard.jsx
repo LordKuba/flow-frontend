@@ -764,7 +764,24 @@ export default function FlowDashboard() {
           <div style={{ flex: 1, overflowY: "auto" }}>
             {filtered.length === 0 && <div style={{ textAlign: "center", padding: "32px 16px", color: "#4a6070", fontSize: 13 }}>אין שיחות</div>}
             {filtered.map(msg => (
-              <div key={msg.id} onClick={() => { setActiveMessage(msg); setShowChat(true); setEditingContact(false); }}
+              <div key={msg.id} onClick={() => {
+                setActiveMessage(msg); setShowChat(true); setEditingContact(false);
+                // Load chat history from DB if not already loaded
+                if (!chatMessages[msg.id]) {
+                  convsApi.messages(msg.id).then(data => {
+                    if (data?.messages) {
+                      setChatMessages(prev => ({ ...prev, [msg.id]: data.messages.map(m => ({
+                        id: m.id,
+                        from: m.direction === 'in' ? 'them' : 'me',
+                        type: m.type || 'text',
+                        text: m.content || '',
+                        time: m.created_at ? new Date(m.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '',
+                        media_url: m.media_url,
+                      })) }));
+                    }
+                  }).catch(() => {});
+                }
+              }}
                 style={{ display: "flex", gap: 10, padding: "12px 14px", cursor: "pointer", background: activeMessage?.id === msg.id ? "#f0f4ff" : "transparent", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
                 <div style={{ position: "relative", flexShrink: 0 }}>
                   <Av letter={msg.avatar} color={msg.color} size={38} />
@@ -1051,40 +1068,39 @@ export default function FlowDashboard() {
                 })()}
               </div>
               <div style={{ flex: 1, padding: "20px", overflow: "auto" }}>
-                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-                  <div
-                    onContextMenu={e => { e.preventDefault(); setMsgContextMenu({ msgText: activeMessage.text, contact: activeMessage.from, channel: activeMessage.channel, x: e.clientX, y: e.clientY, fromMe: false }); }}
-                    onTouchStart={e => { const t = setTimeout(() => setMsgContextMenu({ msgText: activeMessage.text, contact: activeMessage.from, channel: activeMessage.channel, x: 80, y: 300, fromMe: false }), 600); e._t = t; }}
-                    onTouchEnd={e => clearTimeout(e._t)}
-                    style={{ background: "#f0ede8", borderRadius: "12px 12px 2px 12px", padding: "10px 14px", maxWidth: "70%", fontSize: 14, color: "#0d1f3c", cursor: "context-menu" }}
-                  >{activeMessage.text}</div>
-                </div>
-                <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 12 }}>
-                  <div
-                    onContextMenu={e => { e.preventDefault(); setMsgContextMenu({ msgText: "שלום! קיבלנו את ההודעה שלך. נחזור אליך בהקדם 😊", contact: activeMessage.from, channel: activeMessage.channel, x: e.clientX, y: e.clientY, fromMe: true }); }}
-                    onTouchStart={e => { const t = setTimeout(() => setMsgContextMenu({ msgText: "שלום! קיבלנו את ההודעה שלך. נחזור אליך בהקדם 😊", contact: activeMessage.from, channel: activeMessage.channel, x: 80, y: 300, fromMe: true }), 600); e._t = t; }}
-                    onTouchEnd={e => clearTimeout(e._t)}
-                    style={{ background: "#1e5fa8", borderRadius: "12px 12px 12px 2px", padding: "10px 14px", maxWidth: "70%", fontSize: 14, color: "#fff", cursor: "context-menu" }}>שלום! קיבלנו את ההודעה שלך. נחזור אליך בהקדם 😊</div>
-                </div>
-                {(chatMessages[activeMessage.id] || []).map((m, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "flex-start", marginBottom: 12 }}>
-                    {m.type === "contact" ? (
-                      <div style={{ background: "#1e5fa8", borderRadius: "12px 12px 12px 2px", padding: "14px 16px", maxWidth: "80%", color: "#fff", minWidth: 200 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.65)", marginBottom: 6 }}>📇 פרטי קשר</div>
-                        <div style={{ fontSize: 15, fontWeight: 900, color: "#fff", marginBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: 8 }}>{m.business}</div>
-                        <div style={{ fontSize: 13, color: "#fff", marginBottom: 5 }}>📞 {m.phone}</div>
-                        <div style={{ fontSize: 13, color: "#fff", marginBottom: 5 }}>✉️ {m.email}</div>
-                        {m.address ? <div style={{ fontSize: 13, color: "#fff" }}>📍 {m.address}</div> : null}
-                      </div>
-                    ) : (
-                      <div
-                        onContextMenu={e => { e.preventDefault(); setMsgContextMenu({ msgText: m.text, contact: activeMessage.from, channel: activeMessage.channel, x: e.clientX, y: e.clientY, fromMe: true }); }}
-                        onTouchStart={e => { const t = setTimeout(() => setMsgContextMenu({ msgText: m.text, contact: activeMessage.from, channel: activeMessage.channel, x: 80, y: 300, fromMe: true }), 600); e._t = t; }}
-                        onTouchEnd={e => clearTimeout(e._t)}
-                        style={{ background: "#1e5fa8", borderRadius: "12px 12px 12px 2px", padding: "10px 14px", maxWidth: "70%", fontSize: 14, color: "#fff", cursor: "context-menu" }}>{m.text}</div>
-                    )}
-                  </div>
-                ))}
+                {!(chatMessages[activeMessage.id]) && (
+                  <div style={{ textAlign: "center", padding: "20px", color: "#4a6070", fontSize: 13 }}>טוען הודעות...</div>
+                )}
+                {(chatMessages[activeMessage.id] || []).map((m, i) => {
+                  const isMe = m.from === 'me';
+                  return (
+                    <div key={m.id || i} style={{ display: "flex", justifyContent: isMe ? "flex-start" : "flex-end", marginBottom: 12 }}>
+                      {m.type === "contact" ? (
+                        <div style={{ background: "#1e5fa8", borderRadius: "12px 12px 12px 2px", padding: "14px 16px", maxWidth: "80%", color: "#fff", minWidth: 200 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.65)", marginBottom: 6 }}>📇 פרטי קשר</div>
+                          <div style={{ fontSize: 15, fontWeight: 900, color: "#fff", marginBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: 8 }}>{m.business}</div>
+                          <div style={{ fontSize: 13, color: "#fff", marginBottom: 5 }}>📞 {m.phone}</div>
+                          <div style={{ fontSize: 13, color: "#fff", marginBottom: 5 }}>✉️ {m.email}</div>
+                          {m.address ? <div style={{ fontSize: 13, color: "#fff" }}>📍 {m.address}</div> : null}
+                        </div>
+                      ) : (
+                        <div
+                          onContextMenu={e => { e.preventDefault(); setMsgContextMenu({ msgText: m.text, contact: activeMessage.from, channel: activeMessage.channel, x: e.clientX, y: e.clientY, fromMe: isMe }); }}
+                          onTouchStart={e => { const t = setTimeout(() => setMsgContextMenu({ msgText: m.text, contact: activeMessage.from, channel: activeMessage.channel, x: 80, y: 300, fromMe: isMe }), 600); e._t = t; }}
+                          onTouchEnd={e => clearTimeout(e._t)}
+                          style={{
+                            background: isMe ? "#1e5fa8" : "#f0ede8",
+                            borderRadius: isMe ? "12px 12px 12px 2px" : "12px 12px 2px 12px",
+                            padding: "10px 14px", maxWidth: "70%", fontSize: 14,
+                            color: isMe ? "#fff" : "#0d1f3c", cursor: "context-menu"
+                          }}>
+                          {m.text}
+                          {m.time && <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4, textAlign: isMe ? "left" : "right" }}>{m.time}</div>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               <div style={{ padding: "10px 16px", borderTop: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 8, alignItems: "flex-end" }}>
                 {!isMyChat(activeMessage) && !isMain ? (
