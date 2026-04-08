@@ -766,18 +766,27 @@ export default function FlowDashboard() {
             {filtered.map(msg => (
               <div key={msg.id} onClick={() => {
                 setActiveMessage(msg); setShowChat(true); setEditingContact(false);
-                // Load chat history from DB if not already loaded
+                // Load chat history from DB, or sync from WhatsApp if empty
                 if (!chatMessages[msg.id]) {
+                  const mapMessages = (msgs) => msgs.map(m => ({
+                    id: m.id,
+                    from: m.direction === 'in' ? 'them' : 'me',
+                    type: m.type || 'text',
+                    text: m.content || '',
+                    time: m.created_at ? new Date(m.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '',
+                    media_url: m.media_url,
+                  }));
                   convsApi.messages(msg.id).then(data => {
-                    if (data?.messages) {
-                      setChatMessages(prev => ({ ...prev, [msg.id]: data.messages.map(m => ({
-                        id: m.id,
-                        from: m.direction === 'in' ? 'them' : 'me',
-                        type: m.type || 'text',
-                        text: m.content || '',
-                        time: m.created_at ? new Date(m.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '',
-                        media_url: m.media_url,
-                      })) }));
+                    if (data?.messages?.length > 0) {
+                      setChatMessages(prev => ({ ...prev, [msg.id]: mapMessages(data.messages) }));
+                    } else {
+                      // No messages in DB — sync from WhatsApp
+                      setChatMessages(prev => ({ ...prev, [msg.id]: '__syncing__' }));
+                      convsApi.syncHistory(msg.id).then(syncData => {
+                        setChatMessages(prev => ({ ...prev, [msg.id]: mapMessages(syncData?.messages || []) }));
+                      }).catch(() => {
+                        setChatMessages(prev => ({ ...prev, [msg.id]: [] }));
+                      });
                     }
                   }).catch(() => {});
                 }
@@ -1071,7 +1080,13 @@ export default function FlowDashboard() {
                 {!(chatMessages[activeMessage.id]) && (
                   <div style={{ textAlign: "center", padding: "20px", color: "#4a6070", fontSize: 13 }}>טוען הודעות...</div>
                 )}
-                {(chatMessages[activeMessage.id] || []).map((m, i) => {
+                {chatMessages[activeMessage.id] === '__syncing__' && (
+                  <div style={{ textAlign: "center", padding: "20px", color: "#4a6070", fontSize: 13 }}>
+                    <div style={{ width: 24, height: 24, border: "3px solid rgba(30,95,168,0.2)", borderTop: "3px solid #1e5fa8", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 8px" }} />
+                    טוען היסטוריה מ-WhatsApp...
+                  </div>
+                )}
+                {(Array.isArray(chatMessages[activeMessage.id]) ? chatMessages[activeMessage.id] : []).map((m, i) => {
                   const isMe = m.from === 'me';
                   return (
                     <div key={m.id || i} style={{ display: "flex", justifyContent: isMe ? "flex-start" : "flex-end", marginBottom: 12 }}>
