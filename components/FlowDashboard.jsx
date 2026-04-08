@@ -357,6 +357,8 @@ export default function FlowDashboard() {
   const [aiLoading, setAiLoading] = useState(false);
   const [businessAddress, setBusinessAddress] = useState("רחוב הרצל 1, תל אביב");
   const [chatMessages, setChatMessages] = useState({});
+  const [chatInput, setChatInput] = useState('');
+  const [sending, setSending] = useState(false);
   const [connected, setConnected] = useState({ whatsapp: false, instagram: false, facebook: false, gmail: false });
   const [connecting, setConnecting] = useState(null);
   const [waModal, setWaModal] = useState({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
@@ -1127,13 +1129,27 @@ export default function FlowDashboard() {
                     {mob() && (
                       <button onClick={() => setShowCustomerPanel(true)} style={{ width: 40, height: 40, borderRadius: 10, border: "1px solid rgba(0,0,0,0.12)", background: "#f8f7f5", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 18, flexShrink: 0 }}>👤</button>
                     )}
-                    <textarea placeholder="כתוב הודעה..." rows={1}
+                    <textarea placeholder="כתוב הודעה..." rows={1} value={chatInput}
+                      onChange={e => setChatInput(e.target.value)}
                       onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight,120)+"px"; e.target.style.overflowY = e.target.scrollHeight>120?"auto":"hidden"; }}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('send-msg-btn')?.click(); } }}
                       style={{ flex: 1, padding: "10px 14px", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 10, fontSize: 14, fontFamily: "'Heebo',sans-serif", outline: "none", direction: "rtl", resize: "none", lineHeight: 1.5, overflowY: "hidden", maxHeight: 120 }} />
                     <label style={{ width: 40, height: 40, borderRadius: 10, border: "1px solid rgba(0,0,0,0.12)", background: "#f8f7f5", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 20, color: "#4a6070", flexShrink: 0 }}>
                       +<input type="file" accept="image/*,video/*,*" style={{ display: "none" }} onChange={e => { const f=e.target.files[0]; if(f) alert('"'+f.name+'" נבחר'); e.target.value=""; }} />
                     </label>
-                    <button style={{ background: "#1e5fa8", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Heebo',sans-serif", flexShrink: 0, height: 40 }}>שלח</button>
+                    <button id="send-msg-btn" disabled={sending || !chatInput.trim()} onClick={async () => {
+                      if (!chatInput.trim() || !activeMessage) return;
+                      setSending(true);
+                      try {
+                        await convsApi.sendMessage(activeMessage.id, { content: chatInput.trim() });
+                        setChatMessages(prev => ({ ...prev, [activeMessage.id]: [...(Array.isArray(prev[activeMessage.id]) ? prev[activeMessage.id] : []), {
+                          id: Date.now(), from: 'me', type: 'text', text: chatInput.trim(),
+                          time: new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+                        }] }));
+                        setChatInput('');
+                      } catch (err) { console.error('Send failed:', err); }
+                      setSending(false);
+                    }} style={{ background: sending ? "#4a6070" : "#1e5fa8", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 14, fontWeight: 700, cursor: sending ? "not-allowed" : "pointer", fontFamily: "'Heebo',sans-serif", flexShrink: 0, height: 40 }}>{sending ? '...' : 'שלח'}</button>
                   </>
                 )}
               </div>
