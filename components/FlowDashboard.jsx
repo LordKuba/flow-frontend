@@ -1,6 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from "react";
 import { contacts as contactsApi, conversations as convsApi, tasks as tasksApi, events as eventsApi, notifications as notifsApi, channels as channelsApi, org as orgApi } from "@/lib/api";
+import { subscribeToOrgEvents } from "@/lib/realtime";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 
@@ -363,6 +364,8 @@ export default function FlowDashboard() {
   const [connecting, setConnecting] = useState(null);
   const [waModal, setWaModal] = useState({ open: false, step: 'credentials', qr: null, error: null, channelId: null, idInstance: '', apiTokenInstance: '' });
   const waPollerRef = useRef(null);
+  const chatScrollRef = useRef(null);
+  const activeMessageIdRef = useRef(null);
   const [profile, setProfile] = useState({ name: "נירו", business: "Flow", email: "niro@flowapp.co.il", phone: "050-0000000" });
   const [profileSaved, setProfileSaved] = useState(false);
   const [contactInfoMap, setContactInfoMap] = useState({}); // { [msgId]: { phone, email, notes } }
@@ -385,16 +388,24 @@ export default function FlowDashboard() {
           const mapped = convsData.value.conversations.map(c => ({
             id: c.id,
             from: c.contact?.name || c.contact?.full_name || 'לא ידוע',
-            text: c.last_message || '',
-            time: c.updated_at ? new Date(c.updated_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '',
-            channel: c.channel || 'whatsapp',
+            text: c.last_message_text || '',
+            time: c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '',
+            lastMessageAt: c.last_message_at || null,
+            channel: c.channel_type || c.channel || 'whatsapp',
             unread: c.unread_count || 0,
             avatar: (c.contact?.name || c.contact?.full_name || 'X')[0],
             color: '#3a8fe8',
             type: c.contact?.type === 'customer' ? 'לקוח' : 'ליד',
             subStatus: c.contact?.status || '',
             assignedTo: c.assigned_to || 'main',
+            contactPhone: c.contact?.phone || null,
           }));
+          // Sort by last_message_at DESC (most recent first)
+          mapped.sort((a, b) => {
+            const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            return tb - ta;
+          });
           setMessages(mapped);
           setActiveMessage(mapped[0] || null);
         }
@@ -485,6 +496,103 @@ export default function FlowDashboard() {
         setTeam(mapped);
       }
     }).catch(() => {});
+  }, []);
+
+  // Keep activeMessageIdRef in sync with activeMessage so realtime handler sees current value
+  useEffect(() => {
+    activeMessageIdRef.current = activeMessage?.id || null;
+  }, [activeMessage]);
+
+  // Auto-scroll active chat to bottom when its messages change
+  useEffect(() => {
+    if (!activeMessage?.id) return;
+    const msgs = chatMessages[activeMessage.id];
+    if (!Array.isArray(msgs)) return;
+    setTimeout(() => {
+      if (chatScrollRef.current) {
+        chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+      }
+    }, 50);
+  }, [activeMessage?.id, chatMessages]);
+
+  // Subscribe to realtime new_message events
+  useEffect(() => {
+    let unsub = () => {};
+    (async () => {
+      unsub = await subscribeToOrgEvents({
+        onNewMessage: (payload) => {
+          const conv = payload?.conversation;
+          const msg = payload?.message;
+          const contact = payload?.contact;
+          if (!conv?.id || !msg) return;
+
+          const nowIso = new Date().toISOString();
+          const isActive = activeMessageIdRef.current === conv.id;
+
+          // Update inbox list: move to top, update text/time, increment unread (if not active)
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === conv.id);
+            const previewText = msg.content || (msg.type ? `[${msg.type}]` : '');
+            const timeStr = new Date(nowIso).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+
+            if (idx === -1) {
+              // New conversation — prepend
+              const newItem = {
+                id: conv.id,
+                from: contact?.name || 'לא ידוע',
+                text: previewText,
+                time: timeStr,
+                lastMessageAt: nowIso,
+                channel: conv.channel_type || 'whatsapp',
+                unread: msg.direction === 'in' ? 1 : 0,
+                avatar: (contact?.name || 'X')[0],
+                color: '#3a8fe8',
+                type: 'ליד',
+                subStatus: '',
+                assignedTo: 'main',
+                contactPhone: contact?.phone || null,
+              };
+              return [newItem, ...prev];
+            }
+
+            // Update existing — move to top
+            const updated = {
+              ...prev[idx],
+              text: previewText,
+              time: timeStr,
+              lastMessageAt: nowIso,
+              unread: (msg.direction === 'in' && !isActive)
+                ? (prev[idx].unread || 0) + 1
+                : prev[idx].unread,
+            };
+            return [updated, ...prev.slice(0, idx), ...prev.slice(idx + 1)];
+          });
+
+          // If the chat is open, append to chatMessages
+          if (isActive) {
+            setChatMessages(prev => {
+              const existing = Array.isArray(prev[conv.id]) ? prev[conv.id] : [];
+              const newMsg = {
+                id: Date.now() + Math.random(),
+                from: msg.direction === 'in' ? 'them' : 'me',
+                type: msg.type || 'text',
+                text: msg.content || '',
+                time: new Date(nowIso).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }),
+                media_url: msg.media_url,
+              };
+              return { ...prev, [conv.id]: [...existing, newMsg] };
+            });
+            // Auto-scroll to bottom after state updates
+            setTimeout(() => {
+              if (chatScrollRef.current) {
+                chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+              }
+            }, 50);
+          }
+        },
+      });
+    })();
+    return () => { try { unsub && unsub(); } catch {} };
   }, []);
 
   // חישוב התראות מ-state אמיתי – חייב להיות אחרי כל ה-state
@@ -1105,7 +1213,7 @@ export default function FlowDashboard() {
                   );
                 })()}
               </div>
-              <div style={{ flex: 1, padding: "20px", overflow: "auto" }}>
+              <div ref={chatScrollRef} style={{ flex: 1, padding: "20px", overflow: "auto" }}>
                 {!(chatMessages[activeMessage.id]) && (
                   <div style={{ textAlign: "center", padding: "20px", color: "#4a6070", fontSize: 13 }}>טוען הודעות...</div>
                 )}
