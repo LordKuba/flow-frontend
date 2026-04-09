@@ -361,7 +361,7 @@ export default function FlowDashboard() {
   const [sending, setSending] = useState(false);
   const [connected, setConnected] = useState({ whatsapp: false, instagram: false, facebook: false, gmail: false });
   const [connecting, setConnecting] = useState(null);
-  const [waModal, setWaModal] = useState({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
+  const [waModal, setWaModal] = useState({ open: false, step: 'credentials', qr: null, error: null, channelId: null, idInstance: '', apiTokenInstance: '' });
   const waPollerRef = useRef(null);
   const [profile, setProfile] = useState({ name: "נירו", business: "Flow", email: "niro@flowapp.co.il", phone: "050-0000000" });
   const [profileSaved, setProfileSaved] = useState(false);
@@ -462,8 +462,8 @@ export default function FlowDashboard() {
     };
     load();
 
-    // Load WhatsApp connection status
-    channelsApi.whatsappStatus().then(data => {
+    // Load WhatsApp (Green API) connection status
+    channelsApi.greenapiStatus().then(data => {
       if (data?.status === 'connected') {
         setConnected(p => ({ ...p, whatsapp: true }));
         if (data?.channel_id) setWaModal(p => ({ ...p, channelId: data.channel_id }));
@@ -611,7 +611,7 @@ export default function FlowDashboard() {
 
   const doConnect = (ch) => {
     if (ch === 'whatsapp') {
-      setWaModal({ open: true, step: 'disclaimer', qr: null, error: null, channelId: null });
+      setWaModal({ open: true, step: 'credentials', qr: null, error: null, channelId: null, idInstance: '', apiTokenInstance: '' });
       return;
     }
     // Other channels: placeholder
@@ -619,46 +619,73 @@ export default function FlowDashboard() {
     setTimeout(() => { setConnected(p => ({ ...p, [ch]: true })); setConnecting(null); }, 2000);
   };
 
+  // Poll Green API status — stops when instance is authorized
   const startWaPolling = (channelId) => {
     if (waPollerRef.current) clearInterval(waPollerRef.current);
     waPollerRef.current = setInterval(async () => {
       try {
-        const data = await channelsApi.whatsappStatus();
-        if (data?.status === 'connected' || data?.session_status === 'ready') {
+        const data = await channelsApi.greenapiStatus();
+        if (data?.instance_status === 'authorized' || data?.status === 'connected') {
           clearInterval(waPollerRef.current);
           waPollerRef.current = null;
           setConnected(p => ({ ...p, whatsapp: true }));
-          setWaModal({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
-        } else if (data?.qr) {
-          setWaModal(p => ({ ...p, qr: data.qr }));
+          setWaModal({ open: false, step: 'credentials', qr: null, error: null, channelId: null, idInstance: '', apiTokenInstance: '' });
+          return;
         }
+        // Refresh QR image
+        try {
+          const qrData = await channelsApi.greenapiQr();
+          if (qrData?.type === 'qrCode' && qrData?.message) {
+            setWaModal(p => ({ ...p, qr: `data:image/png;base64,${qrData.message}` }));
+          } else if (qrData?.type === 'alreadyLogged') {
+            clearInterval(waPollerRef.current);
+            waPollerRef.current = null;
+            setConnected(p => ({ ...p, whatsapp: true }));
+            setWaModal({ open: false, step: 'credentials', qr: null, error: null, channelId: null, idInstance: '', apiTokenInstance: '' });
+          }
+        } catch {}
       } catch {}
     }, 3000);
   };
 
-  const acceptWaDisclaimer = async () => {
+  // Submit Green API credentials
+  const submitGreenApiCredentials = async () => {
+    const { idInstance, apiTokenInstance } = waModal;
+    if (!idInstance?.trim() || !apiTokenInstance?.trim()) {
+      setWaModal(p => ({ ...p, error: 'יש למלא את שני השדות' }));
+      return;
+    }
     setWaModal(p => ({ ...p, step: 'loading', error: null }));
     try {
-      const data = await channelsApi.whatsappQr(true);
-      if (data?.status === 'qr_pending' && data?.qr) {
-        setWaModal(p => ({ ...p, step: 'qr', qr: data.qr, channelId: data.channel_id }));
-        startWaPolling(data.channel_id);
-      } else if (data?.status === 'already_connected') {
-        setConnected(p => ({ ...p, whatsapp: true }));
-        setWaModal({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
-      } else {
-        // Initializing — poll for QR
-        setWaModal(p => ({ ...p, step: 'qr', qr: null, channelId: data?.channel_id }));
-        startWaPolling(data?.channel_id);
+      const data = await channelsApi.greenapiConnect(idInstance.trim(), apiTokenInstance.trim());
+      const channelId = data?.channel_id;
+
+      // Try to fetch QR
+      try {
+        const qrData = await channelsApi.greenapiQr();
+        if (qrData?.type === 'qrCode' && qrData?.message) {
+          setWaModal(p => ({ ...p, step: 'qr', qr: `data:image/png;base64,${qrData.message}`, channelId }));
+          startWaPolling(channelId);
+        } else if (qrData?.type === 'alreadyLogged') {
+          setConnected(p => ({ ...p, whatsapp: true }));
+          setWaModal({ open: false, step: 'credentials', qr: null, error: null, channelId: null, idInstance: '', apiTokenInstance: '' });
+        } else {
+          // Unknown response — still show QR step and start polling
+          setWaModal(p => ({ ...p, step: 'qr', qr: null, channelId }));
+          startWaPolling(channelId);
+        }
+      } catch {
+        setWaModal(p => ({ ...p, step: 'qr', qr: null, channelId }));
+        startWaPolling(channelId);
       }
     } catch (err) {
-      setWaModal(p => ({ ...p, step: 'disclaimer', error: 'שגיאה בחיבור. נסה שוב.' }));
+      setWaModal(p => ({ ...p, step: 'credentials', error: err?.data?.error || 'חיבור Green API נכשל. בדוק את הפרטים ונסה שוב.' }));
     }
   };
 
   const closeWaModal = () => {
     if (waPollerRef.current) { clearInterval(waPollerRef.current); waPollerRef.current = null; }
-    setWaModal({ open: false, step: 'disclaimer', qr: null, error: null, channelId: null });
+    setWaModal({ open: false, step: 'credentials', qr: null, error: null, channelId: null, idInstance: '', apiTokenInstance: '' });
   };
 
   const assignTo = (msgId, userId) => {
@@ -1894,8 +1921,8 @@ export default function FlowDashboard() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#16a34a", display: "flex", alignItems: "center", gap: 4 }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a" }}/>מחובר</div>
                     <button onClick={async ()=>{
-                      if(g.id==='whatsapp' && waModal.channelId){
-                        try { await channelsApi.disconnect(waModal.channelId); } catch {}
+                      if(g.id==='whatsapp'){
+                        try { await channelsApi.greenapiDisconnect(); } catch {}
                       }
                       setConnected(p=>({...p,[g.id]:false}));
                     }} style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid rgba(0,0,0,0.1)", background: "transparent", color: "#4a6070", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Heebo',sans-serif" }}>נתק</button>
@@ -3176,31 +3203,57 @@ export default function FlowDashboard() {
       </div>
     </div>
 
-    {/* ── WhatsApp QR Modal ── */}
+    {/* ── WhatsApp (Green API) Connect Modal ── */}
     {waModal.open && (
       <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-        <div style={{ background:"#fff", borderRadius:20, padding:28, maxWidth:420, width:"100%", boxShadow:"0 8px 40px rgba(0,0,0,0.2)", fontFamily:"'Heebo',sans-serif", direction:"rtl" }}>
+        <div style={{ background:"#fff", borderRadius:20, padding:28, maxWidth:440, width:"100%", boxShadow:"0 8px 40px rgba(0,0,0,0.2)", fontFamily:"'Heebo',sans-serif", direction:"rtl" }}>
 
-          {/* Disclaimer step */}
-          {waModal.step === 'disclaimer' && (<>
-            <div style={{ fontSize:18, fontWeight:800, color:"#0d1f3c", marginBottom:12 }}>💬 חיבור WhatsApp</div>
-            <div style={{ fontSize:13, color:"#4a6070", lineHeight:1.7, marginBottom:20, background:"#fffbeb", border:"1.5px solid #fde68a", borderRadius:12, padding:"14px 16px" }}>
-              חיבור זה מתבצע דרך WhatsApp Web ואינו חיבור רשמי של Meta. השימוש כפוף לתנאי השירות של WhatsApp. Flow אינה אחראית לכל הגבלה, חסימה, או שינוי מדיניות מצד WhatsApp. האחריות המלאה על החשבון המחובר היא של המשתמש בלבד.
+          {/* Credentials step */}
+          {waModal.step === 'credentials' && (<>
+            <div style={{ fontSize:18, fontWeight:800, color:"#0d1f3c", marginBottom:8 }}>💬 חיבור WhatsApp דרך Green API</div>
+            <div style={{ fontSize:13, color:"#4a6070", lineHeight:1.7, marginBottom:18 }}>
+              הכנס את פרטי ה-Instance שלך מ-<a href="https://green-api.com" target="_blank" rel="noopener noreferrer" style={{ color:"#1e5fa8", fontWeight:700 }}>Green API</a>:
             </div>
+
+            <div style={{ marginBottom:14 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:"#4a6070", marginBottom:6, display:"block" }}>idInstance</label>
+              <input
+                type="text"
+                value={waModal.idInstance}
+                onChange={e => setWaModal(p => ({ ...p, idInstance: e.target.value, error: null }))}
+                placeholder="1101000001"
+                dir="ltr"
+                style={{ width:"100%", padding:"10px 14px", border:"1.5px solid rgba(0,0,0,0.12)", borderRadius:10, fontSize:14, outline:"none", fontFamily:"'Heebo',sans-serif", boxSizing:"border-box" }}
+              />
+            </div>
+
+            <div style={{ marginBottom:16 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:"#4a6070", marginBottom:6, display:"block" }}>apiTokenInstance</label>
+              <input
+                type="text"
+                value={waModal.apiTokenInstance}
+                onChange={e => setWaModal(p => ({ ...p, apiTokenInstance: e.target.value, error: null }))}
+                placeholder="d75b3a66374942c5b3c019c698abc2067..."
+                dir="ltr"
+                style={{ width:"100%", padding:"10px 14px", border:"1.5px solid rgba(0,0,0,0.12)", borderRadius:10, fontSize:14, outline:"none", fontFamily:"'Heebo',sans-serif", boxSizing:"border-box" }}
+              />
+            </div>
+
             {waModal.error && <div style={{ fontSize:13, color:"#dc2626", marginBottom:12, fontWeight:600 }}>{waModal.error}</div>}
+
             <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
               <button onClick={closeWaModal} style={{ padding:"10px 20px", borderRadius:10, border:"1.5px solid rgba(0,0,0,0.1)", background:"transparent", color:"#4a6070", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"'Heebo',sans-serif" }}>ביטול</button>
-              <button onClick={acceptWaDisclaimer} style={{ padding:"10px 24px", borderRadius:10, border:"none", background:"#25D366", color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Heebo',sans-serif" }}>מאשר — המשך</button>
+              <button onClick={submitGreenApiCredentials} style={{ padding:"10px 24px", borderRadius:10, border:"none", background:"#25D366", color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Heebo',sans-serif" }}>חבר</button>
             </div>
           </>)}
 
           {/* Loading step */}
           {waModal.step === 'loading' && (<>
-            <div style={{ fontSize:18, fontWeight:800, color:"#0d1f3c", marginBottom:20 }}>💬 מאתחל חיבור...</div>
+            <div style={{ fontSize:18, fontWeight:800, color:"#0d1f3c", marginBottom:20 }}>💬 מתחבר ל-Green API...</div>
             <div style={{ display:"flex", justifyContent:"center", alignItems:"center", padding:"30px 0" }}>
               <div style={{ width:48, height:48, border:"4px solid rgba(37,211,102,0.2)", borderTop:"4px solid #25D366", borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
             </div>
-            <div style={{ fontSize:13, color:"#4a6070", textAlign:"center" }}>מאתחל Puppeteer — עלול לקחת 30–60 שניות</div>
+            <div style={{ fontSize:13, color:"#4a6070", textAlign:"center" }}>מאמת פרטי Instance ושולף QR...</div>
           </>)}
 
           {/* QR step */}
