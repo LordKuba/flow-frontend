@@ -903,6 +903,13 @@ export default function FlowDashboard() {
             {filtered.map(msg => (
               <div key={msg.id} onClick={() => {
                 setActiveMessage(msg); setShowChat(true); setEditingContact(false);
+
+                // Reset unread count locally for instant feedback, then tell backend
+                if (msg.unread > 0) {
+                  setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, unread: 0 } : m));
+                  convsApi.markRead(msg.id).catch(err => console.error('markRead failed:', err));
+                }
+
                 // Load chat history from DB, or sync from WhatsApp if empty
                 if (!chatMessages[msg.id]) {
                   const mapMessages = (msgs) => msgs.map(m => ({
